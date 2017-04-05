@@ -1,0 +1,1006 @@
+;
+; LazorControl.asm
+;
+; Created: 1/18/2017 4:54:27 PM
+; Author : Bryce and not ross
+;
+
+	.org 0x000
+	rjmp initialize
+	nop
+	nop
+	nop
+	nop
+	nop
+	rjmp KeyPadISR
+	
+KeyPadISR:
+;Becuase we used a pin change interupt, it interupts twice.  This 
+;makes sure that only the rising edge interupt prints the letter.
+cpi secondPinChange, 1
+breq skip
+inc secondPinChange
+
+ldi r18,0			;clear r18
+in r18, pinb		;when reading in USE PIN not PORT
+ldi r16,0b00011111	;load binary number into r16
+and r18,r16			;AND r18 and r16 to make sure that we only get the bits that matter
+
+cpi r18,19			;check to see if the shift key is pressed
+breq shiftPressed	;if it is pressed jump to shift routine
+cpi r18,18			;check to see if the mode key is pressed
+breq mode			;if it is pressed jump to mode routine
+
+cpi shiftKey,0		;check to see if the shift key was the previous key pressed
+breq printLetter	;branch to the print letter routine if the character to be printed is not a shifted character
+ldi r25,20			;if the shift key was pressed, load 20 into r25
+add r18,r25			;add 20 to r18 so that the shift character can be found in the table
+;================================================
+;Consider moving to the print letter routine
+ldi shiftKey,0		;reset the shift key trigger
+;================================================
+
+printLetter:		;This routine prints the character of the pressed key on the screen
+
+	cpi modeKey,1
+	brne skip1
+
+	lds r16,0x0801
+	sts 0x0800,r16
+
+	lds r16,0x0802
+	sts 0x0801,r16
+
+	lds r16,0x0803
+	sts 0x0802,r16
+
+	mov r16,r18
+	sts 0x0803,r16
+skip1:
+;select correct state
+;======================
+rcall LCDstate
+;======================
+
+inc counter
+rcall chkLine
+
+	ldi r30,0x00			;set z pointer low byte to 0 
+	ldi r31,0x08
+	add r30,r18			;add r18 to z pointer low byte
+	lpm r18,z			;load value from table into r18
+	;================================
+	;Might take configure out. Try it
+	;================================
+	ldi configure,1	;This variable is to determine what configuration of the control bits is neccessary in the busy routine
+	rcall busy		;call busy routine
+
+	;Control bits for LCD
+	rcall LCDstate
+	sbi portc,4			;register 0 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+
+	;Print character on Screen
+	rcall busy			;call busy routine
+	out portd,r18		;output initialization command
+	rcall enable		;call enable routine
+	ldi r18,0
+return:
+	reti				;return from interupt
+
+skip:						;This routine is for the falling edge pin change interupt, it does nothing but change a variable
+	ldi secondPinChange,0	;clear pin change variable to indicate the next interupt is the one we want
+reti
+
+shiftPressed:		;This routine has one purpose, to indicate that the shift key was pressed
+	inc shiftKey	;set shiftkey variable to 1 to indicate that the next key pressed is the shifted character
+	cpi shiftKey,2	;check to see if the shift key was pressed twice
+	breq space
+reti
+
+space:
+	ldi shiftKey,0		;reset the shift key trigger
+rjmp printLetter
+
+mode:
+	cpi modeKey,3	;compare mode to 3
+	breq resetMode	;jump to resetMode routine if equal to 3
+	inc modeKey		;increment mode key
+	reti
+resetMode:
+	ldi modeKey,0	;set mode back to 0
+reti
+
+
+delete:
+;move cursor back one space
+;print a space character
+;decrement character counter
+ldi shiftKey,0		;Set shiftKey toggle back to 0
+reti
+
+
+;Moves cursor to next line
+;=============================================
+chkLine:
+	cpi counter,17		;Comparisons to see what line we are on
+	breq line2
+	cpi counter,33
+	breq line3
+	cpi counter,49
+	breq line4
+	cpi counter,65
+	breq line1
+ret
+
+line1:
+	rcall busy			;call busy routine
+	rcall LCDstate
+	cbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+	ldi r16,0b10000000	;letter: Line 3
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+	ldi counter,0
+ret
+
+line2:
+	rcall busy			;call busy routine
+	rcall LCDstate
+	cbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+	ldi r16,0b11000000	;letter: Line 3
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+ret
+
+line3:
+	rcall busy			;call busy routine
+	rcall LCDstate
+	cbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write selectt
+	cbi portc,2			;Enable select
+	ldi r16,0b10010000	;letter: Line 3
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+ret
+
+line4:
+	rcall busy			;call busy routine
+	rcall LCDstate
+	cbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+	ldi r16,0b11010000	;letter: Line 4
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+ret
+;==========================================================
+
+
+
+					;Initialize Program and LCD Display
+;===========================================================
+initialize:
+	
+	rcall LCDstate
+
+	;ldi r17,0
+	ldi r16,0b11011111		;load bit pattern into r16
+	out ddrc,r16		;configure port b to output
+	out ddrd,r16		;configure port d to output
+
+	ldi r16,0b00000000		;load bit pattern into r16
+	out ddrb,r16
+
+
+	;Definitions
+
+	.def secondPinChange = r19	;varible to check if it is the second pin change has occured
+	ldi secondPinChange, 0
+	.def shiftKey = r20			;variable to see if the shift key has been pressed
+	ldi shiftKey,0
+	.def counter = r21			;counts number of characters
+	ldi counter,0
+	.def modeKey = r22			;keeps track of mode
+	lds modeKey,0
+	.def configure = r29	;define a variable determines what the control bits are in busy routine
+	ldi configure,0			;load 0 into variable
+	.def laserChar = r28	;Character to be displayed by laser
+	ldi laserChar,150
+	.def bufferPointer = r27
+	ldi bufferPointer,0
+	.def offset = r26
+	ldi offset,0
+	 ;z pointer
+
+	 ldi r30,0x00		;low z pointer to 0
+	 ldi r31,0x08		;high z pointer to 0x08
+
+
+;============================================================
+;Initialize LCD screen
+;============================================================
+
+	rcall LCDstate
+	cbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+
+	rcall busy			;call busy routine
+	ldi r16,0x01		;load 0x01 into r16
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+
+	rcall busy			;call busy routine
+	ldi r16,0x30		;load 0x01 into r16
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+
+	rcall busy			;call busy routine
+	ldi r16,0x08		;load 0x01 into r16
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+
+	rcall busy			;call busy routine
+	ldi r16,0x06		;load 0x01 into r16
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+
+	rcall busy			;call busy routine
+	ldi r16,0x3c		;load 0x01 into r16
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+
+	rcall busy			;call busy routine
+	ldi r16,0x0f		;load 0x01 into r16
+	out portd,r16		;output initialization command
+	rcall enable		;call enable routine
+
+;============================================================
+;Initialize PIA
+;============================================================
+
+;set state
+rcall laserState
+
+;portc,2 = Enable
+;portc,3 = RS0
+;portc,4 = RS1
+
+		rcall delay
+		sbi portc,3
+		rcall delay
+		cbi portc,4
+		rcall delay
+		ldi r18,0x00
+		rcall delay
+		out portd,r18
+		rcall delay
+		rcall enablePIA
+		rcall delay
+
+		cbi portc,3
+		rcall delay
+		cbi portc,4
+		rcall delay
+		ldi r18,0xff
+		rcall delay
+		out portd,r18
+		rcall delay
+		rcall enablePIA
+		rcall delay
+
+
+		sbi portc,3
+		rcall delay
+		cbi portc,4
+		rcall delay
+		ldi r18,0x04
+		rcall delay
+		out portd,r18
+		rcall delay
+		rcall enablePIA
+		rcall delay
+
+		sbi portc,3
+		rcall delay
+		sbi portc,4
+		rcall delay
+		ldi r18,0x00
+		rcall delay
+		out portd,r18
+		rcall delay
+		rcall enablePIA
+		rcall delay
+
+
+		cbi portc,3
+		rcall delay
+		sbi portc,4
+		rcall delay
+		ldi r18,0xff
+		rcall delay
+		out portd,r18
+		rcall delay
+		rcall enablePIA
+		rcall delay
+
+		sbi portc,3
+		rcall delay
+		sbi portc,4
+		rcall delay
+		ldi r18,0x04
+		rcall delay
+		out portd,r18
+		rcall delay
+		rcall enablePIA
+		rcall delay
+
+rcall LCDstate
+;============================================================
+						;Interrupt Initializations
+;============================================================
+	sei
+	ldi r16,0b00000001
+	sts 0x68,r16		;pin change interrupt control register
+	ldi r16,0b10100000 
+	sts 0x6b,r16		;pin change mask register
+
+;============================================================
+						;ADC Initializations
+;============================================================
+	ldi r16,0b00100101
+	sts ADMUX,r16
+	ldi r16,0b11100011
+	sts ADCSRA,r16
+	ldi r16,0b00000000
+	sts ADCSRB,r16
+
+
+
+
+
+;Initialize Buffer for laser characters
+ldi r16,150
+sts 0x0800,r16
+sts 0x0801,r16
+sts 0x0802,r16
+sts 0x0803,r16
+
+
+main:
+	cpi modeKey,0		;check mode
+	breq LCDdisplay		;if mode 0, then branch to LCDDisplay routine
+	cpi modeKey,1		;check mode again
+	breq laserDisplay	;branch to laserdisplay if in mode 1
+	cpi modeKey,2		;check mode again
+    breq jumpToLaserTest		;branch to lasertest if in mode 2
+	cpi modeKey,3		;check mode again
+	breq jumpToLaserAnimation	;branch to laseranimation if in mode three
+
+		LCDdisplay:		
+		rjmp main	
+
+		laserDisplay:
+		rcall delay
+		rcall laserState
+		rcall delay
+
+		cpi bufferPointer,0
+		brne next
+		lds laserChar,0x0800
+		ldi offset,0
+		rjmp loadBuffer
+next:
+		cpi bufferPointer,1
+		brne next1
+		lds laserChar,0x0801
+		ldi offset,64
+		rjmp loadBuffer
+next1:
+		cpi bufferPointer,2
+		brne next2
+		lds laserChar,0x0802
+		ldi offset,128
+		rjmp loadBuffer
+next2:
+		cpi bufferPointer,3
+		lds laserChar,0x0803
+		ldi offset,192
+
+loadBuffer:
+
+	cpi laserChar,150
+	breq endChar
+
+		ldi r30,0x00
+		ldi r31,0x08
+		mov r18,laserChar
+
+		multiply:
+		cpi r18,0
+		breq done
+		adiw r31:r30,32
+		dec r18
+		rjmp multiply
+		done:
+		
+		adiw r31:r30,38
+
+		
+		displayChar:
+
+
+rjmp skip2
+jumpToLaserTest:
+rjmp laserTest
+jumpToLaserAnimation:
+rjmp laserAnimation
+skip2:
+;=======================================
+			lpm r23,z
+			cpi r23,255
+			breq endChar
+			
+			cpi r23,1
+			brne skipOn
+			rcall laserON
+			adiw r31:r30,1
+			rjmp displayChar
+
+			skipOn:
+			cpi r23,2
+			brne skipOff
+			rcall laserOFF
+			adiw r31:r30,1
+			rjmp displayChar
+
+			skipOff:
+			;x coordinate
+			rcall selectDRA
+			rcall delay
+			lpm r23,z
+			rcall delay
+			add r23,offset
+			out portd,r23
+			rcall delay
+			rcall enablePIA
+			rcall delay
+		
+
+			adiw r31:r30,1
+
+			;y coordinate
+			rcall selectDRB
+			rcall delay
+			lpm r23,z
+			rcall delay
+			out portd,r23
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+		
+			;read in the next instruction
+			adiw r31:r30,1
+;========================================================
+			
+			rjmp displayChar
+endChar:
+
+		cpi bufferPointer,3
+		breq resetBufferPointer
+		inc bufferPointer
+		rjmp main
+
+
+resetBufferPointer:
+		ldi bufferPointer,0
+		rjmp main
+
+		laserTest:
+		    	
+		rcall laserState
+
+		rcall laserOn
+			rcall selectDRA
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+			rcall selectDRA
+			rcall delay
+			ldi r18,0x00
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall delay
+
+			rcall selectDRB
+			rcall delay
+			ldi r18,0xff
+			rcall delay
+			out portd,r18
+			rcall delay
+			rcall enablePIA
+			rcall laserDelay
+			;=======================
+		rjmp main
+		laserAnimation:
+rjmp main
+
+
+
+selectDRA:
+rcall delay
+	cbi portc,3
+	rcall delay
+	cbi portc,4
+ret	
+
+
+selectDRB:
+rcall delay
+	cbi portc,3
+	rcall delay
+	sbi portc,4
+ret	
+
+
+busy:
+	ldi r16,0x00		;load 0xff into r16
+	out ddrd,r16		;configure port d to input
+
+	rcall LCDstate
+	cbi portc,4			;register 0 select
+	sbi portc,3			;R/!W write select
+	cbi portc,2
+
+	nop
+	nop
+	nop
+	nop
+	
+	sbi portc,2			;Enable select
+
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
+check:
+	sbic pind,7
+	rjmp check
+
+	cbi portc,2
+	nop
+	nop
+	nop
+	nop
+
+	ldi r16,0xff		;load 0xff into r16
+	out ddrd,r16		;configure port d to output
+
+	cpi configure,0		;checks configureation mode
+	breq initialize1
+
+writeMessage:
+
+	sbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+ret
+
+initialize1:
+
+	cbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+ret
+
+;====================================================
+
+enable:
+
+	rcall LCDstate
+	sbi portc,2				;set the enable bit
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	cbi portc,2				;clear enable bit
+	nop
+	nop
+	nop
+	nop
+ret
+
+enablePIA:
+rcall laserState
+sbi portc,2
+rcall delay
+cbi portc,2
+rcall delay
+rcall LCDstate
+ret
+
+delay:	;Delay subroutine
+nop
+nop
+nop
+nop
+nop
+nop
+ret
+
+laserDelay:	;Delay for the laser subroutine
+	lds r18,ADCH	;load 255 into r23
+	LOOP3:	ldi r24,7	;load 255 into 
+	LOOP2:	ldi r25,15	;load 100 into r21
+	LOOP1:	dec r25	;decrement r21
+	brne LOOP1	;branch if r21 not equal to zero
+	dec r24	;decrement 
+	brne LOOP2	;branch if  not equal to zero
+	dec r18	;decrement r23
+	brne LOOP3	;branch if r23 not equal to zero
+ret
+
+;===================================
+
+laserOff:
+	cbi portc,2
+	cbi portc,3
+
+	cbi portc,0
+	sbi portc,1
+
+	sbi portc,2
+
+	rcall laserState
+ret
+
+laserOn:
+	cbi portc,2
+	cbi portc,3
+
+	cbi portc,0
+	sbi portc,1
+
+	sbi portc,3
+
+	rcall laserState
+ret
+	
+	
+LCDstate:
+cbi portc,0
+cbi portc,1
+ret
+
+laserState:
+sbi portc,0
+cbi portc,1
+ret	
+	
+	
+										;TABLE of LCD Screen Characters in Binary
+;====================================================================================================================
+ .org 0x0400
+.db 'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','1',' ','S','T','U','V','W','X','Y','Z','0','1','2','3','4','5','6','7','8','9'
+;====================================================================================================================
+; 1
+
+; 1 = laser on
+; 2 = laser off
+; 255 = End Character
+
+; A
+.org 0x0413
+.db 3,63,1,32,192,63,63,2,47,120,1,13,120,2,255
+
+; B
+.org 0x0423
+.db 3,63,1,3,192,40,192,57,171,57,145,40,131,18,129,40,123,59,103,61,78,51,65,3,63,2,255
+
+; C
+.org 0x0433
+.db 63,192,1,41,192,23,176,9,149,10,111,20,85,40,67,63,63,2,255
+
+; D
+.org 0x0443
+.db 3,63,1,3,192,39,190,60,161,60,90,40,65,3,63,2,255
+
+
+; E
+.org 0x0453
+.db 63,63,1,3,63,3,192,63,191,2,63,128,1,3,132,2,255
+
+; F
+.org 0x0463
+.db 3,65,1,3,192,60,192,2,50,141,1,3,141,2,255
+
+; G
+.org 0x0473
+.db 63,192,1,3,192,3,63,63,63,63,120,28,120,2,255
+
+; H
+.org 0x0483
+.db 3,63,1,3,192,2,63,192,1,63,63,2,63,130,1,3,130,2,255
+
+; I
+.org 0x0493
+.db 3,63,1,63,63,2,33,63,1,33,192,2,3,192,1,63,192,2,255
+
+; J
+.org 0x04A3
+.db 3,192,1,63,192,2,31,192,1,31,90,29,70,22,61,11,61,3,69,3,89,2,255
+
+; K
+.org 0x04B3
+.db 3,63,1,3,192,2,3,134,1,61,192,2,3,134,1,63,63,2,255
+
+; L
+.org 0x04C3
+.db 3,192,1,3,63,63,63,2,255
+
+; M
+.org 0x04D3
+.db 3,63,1,13,192,35,116,50,192,63,63,2,255
+
+; N
+.org 0x04E3
+.db 3,63,1,3,192,63,63,63,192,2,255
+
+; O
+.org 0x04F3
+.db 20,63,1,3,90,3,170,20,192,42,192,60,171,60,90,42,63,22,63,2,255
+
+; P
+.org 0x0503
+.db 3,63,1,3,192,43,192,60,177,63,147,43,130,3,132,2,255
+
+; Q
+.org 0x0513
+.db 20,66,1,3,90,3,170,20,190,42,190,60,171,61,90,42,66,20,66,42,66,49,75,36,93,58,63,2,255
+
+; R
+.org 0x0523
+.db 3,63,1,3,192,37,192,58,174,58,144,37,133,3,134,58,62,2,255
+
+; mode
+.org 0x0533
+.db 0
+
+; space
+.org 0x0543
+.db 0
+
+; S
+.org 0x0553
+.db 3,88,1,19,63,41,63,61,91,3,174,16,192,38,192,63,176,2,255
+
+; T
+.org 0x0563
+.db 3,192,1,61,192,2,33,192,1,33,62,2,255
+
+; U
+.org 0x0573
+.db 3,192,1,3,82,17,59,48,60,63,82,63,192,2,255
+
+; V
+.org 0x0583
+.db 3,192,1,33,63,63,192,2,255
+
+; W
+.org 0x0593
+.db 3,192,1,14,63,33,115,46,63,61,192,2,255
+
+; X
+.org 0x05A3
+.db 3,192,1,63,63,2,3,63,1,63,192,2,255
+
+; Y
+.org 0x05B3
+.db 3,192,1,35,141,63,192,2,35,141,1,35,63,2,255
+
+; Z
+.org 0x05C3
+.db 3,192,1,63,192,3,63,63,63,2,255
+
+; 0
+.org 0x05D3
+.db 20,63,1,3,90,3,170,20,192,42,192,60,171,60,90,42,63,22,63,2,255
+
+; 1
+.org 0x05E3
+.db 0,64,1,48,64,25,64,25,192,0,170,2,255
+
+; 2
+.org 0x05F3
+.db 52,64,1,0,64,53,166,38,192,16,192,0,165,2,255
+
+; 3
+.org 0x0603
+.db 0,64,1,47,64,60,92,59,122,27,142,61,192,0,192,2,255
+
+; 4
+.org 0x0613
+.db 3,192,1,3,130,63,130,2,63,192,1,63,63,2,255
+
+; 5
+.org 0x0623
+.db 3,63,1,63,63,63,127,3,127,3,191,63,191,2,255
+
+; 6
+.org 0x0633
+.db 63,192,1,3,192,3,63,63,63,63,126,3,126,2,255
+
+; 7
+.org 0x0643
+.db 3,192,1,63,192,28,66,2,255
+
+; 8
+.org 0x0653
+.db 3,192,1,3,63,63,63,63,192,3,192,2,3,129,1,63,129,2,255
+
+; 9
+.org 0x0663
+.db 63,63,1,63,192,3,192,3,135,63,135,2,255
+
+
+
+
+
+
+;  server lisence: 7788@ess1
+
+
+/*	;Control bits for LCD
+	cbi portc,0
+	cbi portc,1
+
+	ldi configure,1
+	rcall busy		    ;call busy routine
+	sbi portc,4			;register 1 select
+	cbi portc,3			;R/!W write select
+	cbi portc,2			;Enable select
+
+	;Print character on Screen
+	ldi r18,'A'
+	rcall busy			;call busy routine
+	out portd,r18		;output initialization command
+	rcall enable		;call enable routine
+	ldi r18,0*/
